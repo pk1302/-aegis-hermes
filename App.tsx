@@ -1,74 +1,23 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
-  Activity, 
-  Zap, 
-  Brain, 
-  Terminal, 
-  Play, 
-  Pause, 
-  Server,
-  RefreshCw,
-  Dna,
-  Wifi,
-  WifiOff,
-  MessageSquare,
-  Radio,
-  Loader2,
-  CheckCircle2,
-  User as UserIcon,
-  Skull 
+  Activity, Zap, Brain, Terminal, Play, Pause, Server, RefreshCw, Dna, Wifi, WifiOff, 
+  MessageSquare, Radio, Loader2, CheckCircle2, User as UserIcon, Skull, 
+  LayoutDashboard, PieChart, TrendingUp, AlertOctagon, Sword, Globe
 } from 'lucide-react';
-import { AreaChart, Area, XAxis, YAxis, ResponsiveContainer, ReferenceLine, Line } from 'recharts';
+import { 
+  AreaChart, Area, XAxis, YAxis, ResponsiveContainer, ReferenceLine, Line, LineChart,
+  Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Tooltip, BarChart, Bar, Cell
+} from 'recharts';
 
 // --- FIREBASE IMPORTS ---
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged, User } from 'firebase/auth';
-import { getFirestore, doc, setDoc, onSnapshot } from 'firebase/firestore';
-
-// --- TYPE DEFINITIONS ---
-
-type MarketRegime = 'LOW_VOL_RANGE' | 'BULL_TREND' | 'BEAR_TREND' | 'HIGH_VOL_CHOP' | 'FLASH_CRASH';
-type SignalDirection = 'LONG' | 'SHORT' | 'NEUTRAL';
-
-interface Signal {
-  id: string;
-  brain: string;
-  timestamp: number;
-  symbol: string;
-  direction: SignalDirection;
-  confidence: number;
-  entry_price: number;
-  tp: number;
-  sl: number;
-  size: number;
-  regime: MarketRegime;
-  reason: string;
-}
-
-interface BrainState {
-  id: string;
-  name: string;
-  status: 'ACTIVE' | 'REFLECTING' | 'COOLDOWN';
-  balance: number;
-  trades_won: number;
-  trades_lost: number;
-  lastSignal: string;
-  current_thought: string;
-  description: string;
-  color: string;
-  strategy_bias: string;
-  base_aggression: number;
-  adaptive_mod: number;
-  confidence_threshold: number;
-  learning_generation: number;
-  dna_weights?: Record<string, number>;
-}
+import { getFirestore, doc, setDoc, onSnapshot, getDoc } from 'firebase/firestore';
 
 // --- CONFIGURATION ---
-
 const INITIAL_CAPITAL = 100;
+const APP_NAMESPACE = 'aegis-core-v1'; 
 
-// YOUR FIREBASE CONFIGURATION (Integrated)
 const firebaseConfig = {
   apiKey: "AIzaSyAwwFWF0FScFWKTvteUDgVQFJ3dbh8VxGY",
   authDomain: "aegis-hermes.firebaseapp.com",
@@ -79,14 +28,30 @@ const firebaseConfig = {
   measurementId: "G-2F6FGJMQ85"
 };
 
-// Initialize Firebase Services
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 const auth = getAuth(app);
 
-// Logic Namespace for DB Paths
-const APP_NAMESPACE = 'aegis-core-v1'; 
+// --- TYPE DEFINITIONS ---
+type MarketRegime = 'LOW_VOL_RANGE' | 'BULL_TREND' | 'BEAR_TREND' | 'HIGH_VOL_CHOP' | 'FLASH_CRASH';
+type SignalDirection = 'LONG' | 'SHORT' | 'NEUTRAL';
 
+interface Signal {
+  id: string; brain: string; timestamp: number; symbol: string; direction: SignalDirection;
+  confidence: number; entry_price: number; tp: number; sl: number; size: number;
+  regime: MarketRegime; reason: string;
+}
+
+interface BrainState {
+  id: string; name: string; status: 'ACTIVE' | 'REFLECTING' | 'COOLDOWN';
+  balance: number; trades_won: number; trades_lost: number;
+  lastSignal: string; current_thought: string; description: string; color: string;
+  strategy_bias: string; base_aggression: number; adaptive_mod: number;
+  confidence_threshold: number; learning_generation: number;
+  dna_weights?: Record<string, number>;
+}
+
+// --- DEFAULT STATE ---
 const DEFAULT_BRAINS: BrainState[] = [
   { id: 'b_rotter', name: 'Paul Rotter', status: 'ACTIVE', balance: INITIAL_CAPITAL, trades_won: 0, trades_lost: 0, lastSignal: 'Init...', current_thought: 'Calibrating L2 feed...', description: 'HFT/Order Book', color: '#10b981', strategy_bias: 'hft', base_aggression: 0.9, adaptive_mod: 0, confidence_threshold: 0.85, learning_generation: 0 },
   { id: 'b_volman', name: 'Bob Volman', status: 'ACTIVE', balance: INITIAL_CAPITAL, trades_won: 0, trades_lost: 0, lastSignal: 'Init...', current_thought: 'Measuring tick volatility...', description: 'Fractal Price Action', color: '#3b82f6', strategy_bias: 'scalp', base_aggression: 0.6, adaptive_mod: 0, confidence_threshold: 0.80, learning_generation: 0 },
@@ -95,13 +60,11 @@ const DEFAULT_BRAINS: BrainState[] = [
   { id: 'b_hougaard', name: 'Tom Hougaard', status: 'ACTIVE', balance: INITIAL_CAPITAL, trades_won: 0, trades_lost: 0, lastSignal: 'Init...', current_thought: 'Checking momentum slope...', description: 'Momentum', color: '#ec4899', strategy_bias: 'swing', base_aggression: 0.8, adaptive_mod: 0, confidence_threshold: 0.88, learning_generation: 0 },
   { id: 'b_medhat', name: 'Momen Medhat', status: 'ACTIVE', balance: INITIAL_CAPITAL, trades_won: 0, trades_lost: 0, lastSignal: 'Init...', current_thought: 'Scanning regime state...', description: 'Adaptive', color: '#06b6d4', strategy_bias: 'scalp', base_aggression: 0.5, adaptive_mod: 0, confidence_threshold: 0.80, learning_generation: 0 },
   { id: 'b_criminal', name: 'The Criminal', status: 'ACTIVE', balance: INITIAL_CAPITAL, trades_won: 0, trades_lost: 0, lastSignal: 'Init...', current_thought: 'Scanning for liquidity voids...', description: 'Stop Hunter/Exploit', color: '#e11d48', strategy_bias: 'criminal', base_aggression: 0.95, adaptive_mod: 0, confidence_threshold: 0.58, learning_generation: 0 },
-  { 
-    id: 'b_singularity', name: 'The Singularity', status: 'ACTIVE', balance: INITIAL_CAPITAL, trades_won: 0, trades_lost: 0, lastSignal: 'Synthesizing...', current_thought: 'Analyzing swarm intelligence...', description: 'Meta-Evolutionary', color: '#ffffff', strategy_bias: 'meta', base_aggression: 0.1, adaptive_mod: 0, confidence_threshold: 0.70, learning_generation: 1,
-    dna_weights: { 'b_rotter': 0.14, 'b_volman': 0.14, 'b_brooks': 0.14, 'b_diamond': 0.14, 'b_hougaard': 0.14, 'b_medhat': 0.14, 'b_criminal': 0.16 }
-  },
+  { id: 'b_singularity', name: 'The Singularity', status: 'ACTIVE', balance: INITIAL_CAPITAL, trades_won: 0, trades_lost: 0, lastSignal: 'Synthesizing...', current_thought: 'Analyzing swarm intelligence...', description: 'Meta-Evolutionary', color: '#ffffff', strategy_bias: 'meta', base_aggression: 0.1, adaptive_mod: 0, confidence_threshold: 0.70, learning_generation: 1, dna_weights: { 'b_rotter': 0.14, 'b_volman': 0.14, 'b_brooks': 0.14, 'b_diamond': 0.14, 'b_hougaard': 0.14, 'b_medhat': 0.14, 'b_criminal': 0.16 } },
 ];
 
 export default function AegisHermesEngine() {
+  // System
   const [active, setActive] = useState(false);
   const [panicMode, setPanicMode] = useState(false);
   const [user, setUser] = useState<User | null>(null);
@@ -110,124 +73,118 @@ export default function AegisHermesEngine() {
   const [isSaving, setIsSaving] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   
-  // Mutable Refs for Logic
-  const priceDataRef = useRef<{time: string, price: number, vwap: number}[]>([]);
-  const evolutionTickRef = useRef(0);
-  const saveTimeout = useRef<NodeJS.Timeout | null>(null);
-  
+  // UI State
+  const [activeTab, setActiveTab] = useState<'CHART' | 'PERFORMANCE' | 'DNA'>('CHART');
+
   // Data
   const [priceData, setPriceData] = useState<{time: string, price: number, vwap: number}[]>([]);
   const [currentPrice, setCurrentPrice] = useState(0);
-  
-  // Engine
   const [brains, setBrains] = useState<BrainState[]>(DEFAULT_BRAINS);
   const [logs, setLogs] = useState<{time: string, source: string, msg: string, type: string}[]>([]);
   const [activeSignals, setActiveSignals] = useState<Signal[]>([]);
   
+  // Refs
+  const priceDataRef = useRef<{time: string, price: number, vwap: number}[]>([]);
+  const evolutionTickRef = useRef(0);
+  const saveTimeout = useRef<NodeJS.Timeout | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { priceDataRef.current = priceData; }, [priceData]);
 
-  // --- 1. AUTH & PERSISTENCE ---
+  // --- STATS CALCULATION ---
+  const globalStats = useMemo(() => {
+    const totalEquity = brains.reduce((acc, b) => acc + b.balance, 0);
+    const totalStart = brains.length * INITIAL_CAPITAL;
+    const netPnL = totalEquity - totalStart;
+    const totalWins = brains.reduce((acc, b) => acc + b.trades_won, 0);
+    const totalLosses = brains.reduce((acc, b) => acc + b.trades_lost, 0);
+    const winRate = totalWins + totalLosses > 0 ? (totalWins / (totalWins + totalLosses)) * 100 : 0;
+    
+    const perfData = brains.map(b => ({
+      name: b.name.split(' ')[1] || b.name,
+      profit: b.balance - INITIAL_CAPITAL,
+      winRate: (b.trades_won / (b.trades_won + b.trades_lost || 1)) * 100,
+      color: b.color
+    })).sort((a,b) => b.profit - a.profit);
+
+    const singularity = brains.find(b => b.id === 'b_singularity');
+    const dnaData = singularity?.dna_weights ? Object.entries(singularity.dna_weights).map(([k, v]) => ({
+      subject: k.replace('b_', '').toUpperCase(),
+      A: v * 100,
+      fullMark: 100
+    })) : [];
+
+    return { totalEquity, netPnL, winRate, totalWins, totalLosses, perfData, dnaData };
+  }, [brains]);
+
+  // --- AUTH & LOAD (PUBLIC CHANNEL) ---
   useEffect(() => {
     if (!auth) return;
-    const initAuth = async () => {
-      try {
-        await signInAnonymously(auth);
-      } catch (e) {
-        console.error("Auth Error:", e);
-        addLog('SYSTEM', 'Authentication Failed. Check Console.', 'error');
-      }
-    };
+    const initAuth = async () => { await signInAnonymously(auth); };
     initAuth();
     const unsubscribe = onAuthStateChanged(auth, (u) => { if (u) setUser(u); });
     return () => unsubscribe();
   }, []);
 
-  // --- 2. LOAD DATA ---
   useEffect(() => {
-    if (!user || !db) return;
-    const docRef = doc(db, 'artifacts', APP_NAMESPACE, 'users', user.uid, 'aegis_data', 'brains_state_v4');
+    if (!db) return;
+    // FIXED: Added 'live' collection segment to make path valid (6 segments)
+    const docRef = doc(db, 'artifacts', APP_NAMESPACE, 'public', 'data', 'live', 'swarm_state_v9');
+    
     const unsub = onSnapshot(docRef, (snap) => {
-      if (snap.exists()) {
-        const data = snap.data();
-        if (data.brains) {
-          setBrains(prev => {
-             const merged = DEFAULT_BRAINS.map(def => {
-                const saved = data.brains.find((b: any) => b.id === def.id);
-                if (saved) {
-                   const newBrain = { ...def, ...saved };
-                   if (def.id === 'b_singularity' && !saved.dna_weights) newBrain.dna_weights = def.dna_weights;
-                   return newBrain;
-                }
-                return def;
-             });
-             return merged;
-          });
-          setDataLoaded(true);
-          addLog('DATABASE', 'Neural State Synchronized.', 'success');
-        }
-      } else {
-        setDoc(docRef, { brains: DEFAULT_BRAINS, last_updated: Date.now() });
+      if (snap.exists() && snap.data().brains) {
+        setBrains(prev => {
+           return DEFAULT_BRAINS.map(def => {
+              const saved = snap.data().brains.find((b: any) => b.id === def.id);
+              if (saved) {
+                 const newBrain = { ...def, ...saved };
+                 if (def.id === 'b_singularity' && !saved.dna_weights) newBrain.dna_weights = def.dna_weights;
+                 return newBrain;
+              }
+              return def;
+           });
+        });
         setDataLoaded(true);
-        addLog('DATABASE', 'Profile Initialized.', 'info');
+        if (!active) addLog('DATABASE', 'Sync: Received Swarm Update.', 'success');
+      } else {
+        if (!dataLoaded) addLog('DATABASE', 'Waiting for Bot Signal...', 'warn');
       }
     });
     return () => unsub();
-  }, [user]);
+  }, [active]);
 
+  // --- SAVE (Only if Active/Master) ---
   const triggerSave = (newBrains: BrainState[]) => {
-    if (!user || !db || !dataLoaded) return; 
+    if (!db || !dataLoaded || !active) return;
+    
     setIsSaving(true);
     if (saveTimeout.current) clearTimeout(saveTimeout.current);
     saveTimeout.current = setTimeout(async () => {
       try {
-        const docRef = doc(db, 'artifacts', APP_NAMESPACE, 'users', user.uid, 'aegis_data', 'brains_state_v4');
+        // FIXED: Added 'live' collection segment here as well
+        const docRef = doc(db, 'artifacts', APP_NAMESPACE, 'public', 'data', 'live', 'swarm_state_v9');
         const sanitizedBrains = newBrains.map(({ current_thought, ...rest }) => rest);
         await setDoc(docRef, { brains: sanitizedBrains, last_updated: Date.now() }, { merge: true });
         setIsSaving(false);
-      } catch (e) {
-        setIsSaving(false);
-        addLog('DATABASE', 'Save Failed!', 'error');
-      }
+      } catch (e) { setIsSaving(false); }
     }, 200); 
   };
 
-  useEffect(() => {
-    const handleUnload = () => { if (isSaving) {} };
-    window.addEventListener('beforeunload', handleUnload);
-    return () => window.removeEventListener('beforeunload', handleUnload);
-  }, [isSaving]);
-
-  const addLog = (source: string, msg: string, type: 'info'|'success'|'warn'|'error'|'trade'|'evolve'|'dna' = 'info') => {
-    setLogs(prev => [{
-      time: new Date().toLocaleTimeString('en-US', {hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit', fractionalSecondDigits: 3}),
-      source,
-      msg,
-      type
-    }, ...prev.slice(0, 49)]);
-  };
-
-  // --- 3. WEBSOCKET ---
+  // --- WEBSOCKET ---
   useEffect(() => {
     if (!active || !dataLoaded) {
        if (wsRef.current) { wsRef.current.close(); wsRef.current = null; }
-       if (active && !dataLoaded) addLog('SYSTEM', 'Waiting for DB Sync...', 'warn');
        setConnectionStatus('CONNECTING');
        return;
     }
-
     const connectWS = () => {
-        addLog('NETWORK', 'Opening WebSocket...', 'info');
         const ws = new WebSocket('wss://ws-feed.exchange.coinbase.com');
         wsRef.current = ws;
-
         ws.onopen = () => {
             setConnectionStatus('LIVE');
             addLog('NETWORK', 'Live Ticker Active.', 'success');
             ws.send(JSON.stringify({ type: "subscribe", product_ids: ["BTC-USD"], channels: ["ticker"] }));
         };
-
         ws.onmessage = (event) => {
             const data = JSON.parse(event.data);
             if (data.type === 'ticker' && data.price) {
@@ -235,11 +192,7 @@ export default function AegisHermesEngine() {
                 setCurrentPrice(price);
                 setPriceData(prev => {
                     const lastVwap = prev.length > 0 ? prev[prev.length-1].vwap : price;
-                    const newPoint = {
-                        time: new Date().toLocaleTimeString('en-US', {hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit'}),
-                        price: price,
-                        vwap: (lastVwap * 0.99) + (price * 0.01)
-                    };
+                    const newPoint = { time: new Date().toLocaleTimeString(), price: price, vwap: (lastVwap * 0.99) + (price * 0.01) };
                     const newData = [...prev, newPoint];
                     if (newData.length > 50) newData.shift();
                     return newData;
@@ -247,44 +200,34 @@ export default function AegisHermesEngine() {
                 processBrains(price);
             }
         };
-
         ws.onerror = () => { setConnectionStatus('ERROR'); };
         ws.onclose = () => { if (active) setTimeout(connectWS, 1000); };
     };
-
     connectWS();
     return () => { if (wsRef.current) wsRef.current.close(); };
   }, [active, dataLoaded]);
 
-  // --- 4. LOGIC & EXECUTION ---
+  // --- LOGIC ---
   const generateThought = (brain: BrainState, price: number, vwap: number): string => {
      if (brain.status === 'REFLECTING') return 'Analyzing loss pattern...';
      const diff = price - vwap;
-
-     if (brain.name === 'Paul Rotter') {
-        const imb = (Math.random() * 0.5 + 0.3).toFixed(2);
-        return `Scanning L2... Imbalance: ${imb}`;
-     }
-     if (brain.name === 'Bob Volman') return `Price action tight. Range: ${(price * 0.0001).toFixed(1)}`;
-     if (brain.name === 'Al Brooks') return diff > 0 ? 'Bull channel.. wait for PB' : 'Bear channel.. wait for L2';
-     if (brain.name === 'Matt Diamond') return diff > 25 ? `Price > VWAP (+${diff.toFixed(0)}). Overextended.` : diff < -25 ? `Price < VWAP (${diff.toFixed(0)}). Value.` : 'Equilibrium.';
-     if (brain.name === 'Tom Hougaard') return 'Scanning momentum slope...';
-     if (brain.name === 'Momen Medhat') return `Adaptive Mod: ${brain.adaptive_mod.toFixed(2)}. Regime: LOW_VOL`;
-     if (brain.id === 'b_criminal') {
-         const tactics = ['Stop cluster detected', 'Front-running retail', 'Buying support', 'Fake breakout fade', 'Whale shadow', 'Inducing FOMO', 'Liquidity void', 'Sniping weak hands'];
-         return tactics[Math.floor(Math.random() * tactics.length)];
-     }
+     if (brain.name === 'Paul Rotter') return `Imbalance: ${(Math.random() * 0.5 + 0.3).toFixed(2)}`;
+     if (brain.name === 'Bob Volman') return `Tick Vol: ${(price * 0.0001).toFixed(1)}`;
+     if (brain.name === 'Al Brooks') return diff > 0 ? 'Bull channel' : 'Bear channel';
+     if (brain.name === 'Matt Diamond') return diff > 25 ? `> VWAP (+${diff.toFixed(0)})` : 'Equilibrium';
+     if (brain.name === 'Tom Hougaard') return 'Scanning momentum...';
+     if (brain.name === 'Momen Medhat') return `Regime: LOW_VOL`;
+     if (brain.id === 'b_criminal') return ['Hunting stops...', 'Liquidity void...', 'Inducing FOMO...'][Math.floor(Math.random()*3)];
      if (brain.id === 'b_singularity') {
          const weights = brain.dna_weights || {};
          const topLink = Object.entries(weights).sort((a,b) => b[1] - a[1])[0];
-         return `DNA Focus: ${topLink ? topLink[0].replace('b_', '') : 'None'} (${((topLink?.[1]||0)*100).toFixed(0)}%)`;
+         return `Focus: ${topLink ? topLink[0].replace('b_', '') : 'None'} (${((topLink?.[1]||0)*100).toFixed(0)}%)`;
      }
-     return 'Standing by...';
+     return '...';
   };
 
   const processBrains = (price: number) => {
     if (panicMode || !dataLoaded) return;
-    
     const currentPriceData = priceDataRef.current;
     const vwap = currentPriceData.length > 0 ? currentPriceData[currentPriceData.length-1].vwap : price;
     evolutionTickRef.current += 1;
@@ -293,7 +236,6 @@ export default function AegisHermesEngine() {
       let currentBrains = [...prevBrains];
       let hasEvolved = false;
 
-      // Evolution
       if (evolutionTickRef.current % 50 === 0) {
           const singularity = currentBrains.find(b => b.id === 'b_singularity');
           if (singularity && singularity.dna_weights) {
@@ -316,23 +258,20 @@ export default function AegisHermesEngine() {
           }
       }
 
-      // Thoughts & Trading
       currentBrains = currentBrains.map(b => ({ ...b, current_thought: generateThought(b, price, vwap) }));
 
       if (Math.random() > 0.95) { 
           currentBrains = currentBrains.map(brain => {
             if (brain.status !== 'ACTIVE') return brain;
-            let shouldFire = false;
-            let dir: SignalDirection = 'NEUTRAL';
-            let reason = '';
+            let shouldFire = false, dir: SignalDirection = 'NEUTRAL', reason = '';
             const rand = Math.random();
 
-            if (brain.name === 'Paul Rotter' && rand > 0.97) { shouldFire=true; dir=Math.random()>0.5?'LONG':'SHORT'; reason='Order Flow'; }
-            if (brain.name === 'Bob Volman' && rand > 0.98) { shouldFire=true; dir=price>vwap?'LONG':'SHORT'; reason='Breakout'; }
-            if (brain.name === 'Al Brooks' && rand > 0.97) { shouldFire=true; dir=Math.random()>0.5?'LONG':'SHORT'; reason='Setup'; }
-            if (brain.name === 'Matt Diamond') { if (price > vwap + 25 && rand > 0.95) { shouldFire=true; dir='SHORT'; reason='VWAP Fade'; } if (price < vwap - 25 && rand > 0.95) { shouldFire=true; dir='LONG'; reason='VWAP Bounce'; } }
-            if (brain.name === 'Tom Hougaard' && rand > 0.98) { shouldFire=true; dir=price>vwap?'LONG':'SHORT'; reason='Trend Add'; }
-            if (brain.name === 'Momen Medhat' && rand > 0.97) { shouldFire=true; dir=Math.random()>0.5?'LONG':'SHORT'; reason='Regime'; }
+            if (brain.id === 'b_rotter' && rand > 0.97) { shouldFire=true; dir=Math.random()>0.5?'LONG':'SHORT'; reason='Order Flow'; }
+            if (brain.id === 'b_volman' && rand > 0.98) { shouldFire=true; dir=price>vwap?'LONG':'SHORT'; reason='Breakout'; }
+            if (brain.id === 'b_brooks' && rand > 0.97) { shouldFire=true; dir=Math.random()>0.5?'LONG':'SHORT'; reason='Setup'; }
+            if (brain.id === 'b_diamond') { if (price > vwap + 25) { shouldFire=true; dir='SHORT'; reason='VWAP Fade'; } if (price < vwap - 25) { shouldFire=true; dir='LONG'; reason='VWAP Bounce'; } }
+            if (brain.id === 'b_hougaard' && rand > 0.98) { shouldFire=true; dir=price>vwap?'LONG':'SHORT'; reason='Trend'; }
+            if (brain.id === 'b_medhat' && rand > 0.97) { shouldFire=true; dir=Math.random()>0.5?'LONG':'SHORT'; reason='Regime'; }
             if (brain.id === 'b_criminal' && rand > 0.94) { shouldFire=true; dir=Math.random()>0.5?'LONG':'SHORT'; reason='Liquidity Grab'; }
             
             if (brain.id === 'b_singularity' && rand > 0.96) {
@@ -341,8 +280,7 @@ export default function AegisHermesEngine() {
                     prevBrains.forEach(b => {
                         if (b.id === 'b_singularity') return;
                         const w = brain.dna_weights![b.id] || 0;
-                        const bProfit = b.balance - INITIAL_CAPITAL;
-                        if (bProfit > 0) sentimentScore += (price > vwap ? 1 : -1) * w;
+                        if ((b.balance - INITIAL_CAPITAL) > 0) sentimentScore += (price > vwap ? 1 : -1) * w;
                     });
                 }
                 if (Math.abs(sentimentScore) > 0.1) { shouldFire=true; dir=sentimentScore>0?'LONG':'SHORT'; reason=`DNA (${sentimentScore.toFixed(2)})`; } 
@@ -361,8 +299,7 @@ export default function AegisHermesEngine() {
     setActiveSignals(prev => {
         const surviving: Signal[] = [];
         prev.forEach(sig => {
-            let close = false;
-            let result: 'WIN'|'LOSS'|null = null;
+            let close = false, result: 'WIN'|'LOSS'|null = null;
             if (sig.direction === 'LONG') { if (price >= sig.tp) { close=true; result='WIN'; } else if (price <= sig.sl) { close=true; result='LOSS'; } } 
             else { if (price <= sig.tp) { close=true; result='WIN'; } else if (price >= sig.sl) { close=true; result='LOSS'; } }
 
@@ -371,17 +308,13 @@ export default function AegisHermesEngine() {
                 addLog('EXCHANGE', `${sig.brain} CLOSED ${result} ($${pnl})`, result==='WIN'?'success':'error');
                 setBrains(curr => {
                     const newB = curr.map(b => {
-                        if (b.name === sig.brain) {
-                            return { ...b, balance: b.balance + pnl, trades_won: result==='WIN'?b.trades_won+1:b.trades_won, trades_lost: result==='LOSS'?b.trades_lost+1:b.trades_lost };
-                        }
+                        if (b.name === sig.brain) return { ...b, balance: b.balance + pnl, trades_won: result==='WIN'?b.trades_won+1:b.trades_won, trades_lost: result==='LOSS'?b.trades_lost+1:b.trades_lost };
                         return b;
                     });
                     triggerSave(newB); 
                     return newB;
                 });
-            } else {
-                surviving.push(sig);
-            }
+            } else { surviving.push(sig); }
         });
         return surviving;
     });
@@ -395,185 +328,214 @@ export default function AegisHermesEngine() {
       addLog(brain.name, `${dir} | ${reason}`, brain.id === 'b_singularity' ? 'dna' : 'trade');
   };
 
-  // --- RENDER ---
+  const addLog = (source: string, msg: string, type: 'info'|'success'|'warn'|'error'|'trade'|'evolve'|'dna' = 'info') => {
+    setLogs(prev => [{ time: new Date().toLocaleTimeString(), source, msg, type }, ...prev.slice(0, 49)]);
+  };
+
   const sortedBrains = [...brains].sort((a, b) => b.balance - a.balance);
-  const singularityBrain = brains.find(b => b.id === 'b_singularity');
 
   return (
-    <div className="flex flex-col h-screen bg-black text-green-500 font-mono overflow-hidden selection:bg-green-900 selection:text-white">
-      {/* HEADER */}
-      <header className="flex items-center justify-between px-4 py-2 border-b border-green-900 bg-gray-900/50 flex-none h-14">
-        <div className="flex items-center gap-3">
-          <Brain className={active ? "text-green-500 animate-pulse" : "text-gray-500"} />
-          <div>
-            <h1 className="text-xl font-bold tracking-tighter text-white">AEGIS HERMES <span className="text-xs text-blue-400">DEPLOYED</span></h1>
-            <div className="flex gap-2 text-[10px] text-gray-400">
-               <span className={connectionStatus === 'LIVE' ? "text-green-400 animate-pulse" : "text-red-400"}>
-                 {connectionStatus === 'LIVE' ? "● TICKER ACTIVE" : "○ TICKER STOPPED"}
-               </span>
-               <span className={dataLoaded ? "text-green-400" : "text-yellow-500 flex items-center gap-1"}>
-                  | {dataLoaded ? "● DB SYNCED" : <><Loader2 size={8} className="animate-spin"/> SYNCING DB...</>}
-               </span>
-               <span className="flex items-center gap-1 min-w-[60px]">
-                  | {isSaving ? <span className="text-yellow-400 flex items-center gap-1"><RefreshCw size={8} className="animate-spin"/> SAVING...</span> : <span className="text-gray-500 flex items-center gap-1"><CheckCircle2 size={8}/> SAVED</span>}
-               </span>
-               <span className="flex items-center gap-1 text-gray-500 border-l border-gray-800 pl-2 ml-1">
-                   <UserIcon size={8} /> {user ? user.uid.slice(0, 6) : '...'}
-               </span>
-            </div>
+    <div className="flex flex-col h-screen bg-[#0a0a0a] text-gray-300 font-mono overflow-hidden">
+      
+      {/* TOP COMMAND BAR */}
+      <header className="flex items-center justify-between px-4 py-2 border-b border-gray-800 bg-black/80 backdrop-blur-md z-50">
+        <div className="flex items-center gap-4">
+          <div className="flex flex-col">
+             <h1 className="text-xl font-bold tracking-tight text-white flex items-center gap-2">
+                <Brain className="text-purple-500" size={20} />
+                AEGIS HERMES <span className="text-xs text-gray-500 px-1.5 py-0.5 rounded border border-gray-700">V9.0 COMMAND</span>
+             </h1>
+          </div>
+          <div className="h-8 w-px bg-gray-800 mx-2"></div>
+          {/* AGGREGATE METRICS */}
+          <div className="flex gap-6 text-xs">
+             <div>
+                <span className="text-gray-500 block text-[10px]">SWARM EQUITY</span>
+                <span className="text-white font-bold text-lg">${globalStats.totalEquity.toLocaleString(undefined, {minimumFractionDigits: 2})}</span>
+             </div>
+             <div>
+                <span className="text-gray-500 block text-[10px]">NET PNL (24H)</span>
+                <span className={`font-bold text-lg ${globalStats.netPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                   {globalStats.netPnL >= 0 ? '+' : ''}{globalStats.netPnL.toFixed(2)}
+                </span>
+             </div>
+             <div>
+                <span className="text-gray-500 block text-[10px]">GLOBAL WIN RATE</span>
+                <span className="text-blue-400 font-bold text-lg">{globalStats.winRate.toFixed(1)}%</span>
+             </div>
           </div>
         </div>
-        <div className="flex gap-2">
+
+        <div className="flex items-center gap-3">
+           <div className="flex items-center gap-1 text-[10px] text-gray-500 border-r border-gray-800 pr-3">
+              <Globe size={10} /> BROADCAST MODE
+           </div>
+           <div className={`flex items-center gap-2 px-3 py-1 rounded text-[10px] border ${connectionStatus === 'LIVE' ? 'border-green-900 bg-green-900/10 text-green-400' : 'border-red-900 bg-red-900/10 text-red-400'}`}>
+              {connectionStatus === 'LIVE' ? <Wifi size={12}/> : <WifiOff size={12}/>}
+              {connectionStatus}
+           </div>
            <button 
             onClick={() => setActive(!active)}
             disabled={!dataLoaded}
-            className={`flex items-center gap-2 px-4 py-1.5 rounded text-sm font-bold transition-all 
-                ${!dataLoaded ? 'bg-gray-800 text-gray-500 cursor-not-allowed border-gray-700' : 
-                  active ? 'bg-red-900/30 text-red-400 border border-red-900 hover:bg-red-900/50' : 
-                  'bg-green-900/30 text-green-400 border border-green-900 hover:bg-green-900/50'}`}
+            className={`flex items-center gap-2 px-4 py-1.5 rounded text-sm font-bold transition-all border ${active ? 'border-red-900 bg-red-900/20 text-red-400' : 'border-green-900 bg-green-900/20 text-green-400 hover:bg-green-900/30'}`}
           >
             {active ? <Pause size={16} /> : <Play size={16} />}
-            {!dataLoaded ? 'LOADING DB...' : active ? 'DISCONNECT FEED' : 'CONNECT FEED'}
+            {active ? 'HALT BOT' : 'ENGAGE BOT'}
           </button>
         </div>
       </header>
 
-      {/* DASHBOARD */}
-      <div className="flex-1 grid grid-cols-12 gap-1 p-2 bg-gray-950 overflow-hidden">
-        {/* LEFT: BRAINS */}
-        <div className="col-span-5 flex flex-col gap-1 overflow-hidden h-full">
-           <div className="bg-gray-900 border border-purple-900/50 p-2 rounded-sm mb-1 flex-none">
-             <div className="flex justify-between items-center mb-1">
-                <span className="text-xs font-bold text-purple-400 flex items-center gap-2"><Dna size={12}/> SINGULARITY DNA</span>
-                <span className="text-[9px] text-gray-500">GEN: {singularityBrain?.learning_generation}</span>
-             </div>
-             <div className="grid grid-cols-3 gap-1">
-                {singularityBrain?.dna_weights && Object.entries(singularityBrain.dna_weights).map(([key, val]) => (
-                   <div key={key} className="bg-black/50 p-1 rounded border border-gray-800 text-[8px] flex flex-col items-center">
-                      <span className="text-gray-500">{key.replace('b_', '').toUpperCase().slice(0,5)}</span>
-                      <span className="text-purple-300 font-bold">{(val * 100).toFixed(1)}%</span>
-                      <div className="w-full h-0.5 bg-gray-800 mt-1">
-                         <div className="h-full bg-purple-500 transition-all duration-500" style={{width: `${val*200}%`}}></div>
-                      </div>
-                   </div>
-                ))}
-             </div>
-          </div>
-          <div className="bg-gray-900 border border-green-900/30 p-2 rounded-sm flex justify-between items-center flex-none">
-             <span className="text-xs font-bold text-gray-400 flex items-center gap-2"><Radio size={12}/> NEURAL TELEMETRY</span>
-          </div>
-          <div className="flex-1 bg-gray-900 border border-green-900/30 p-2 rounded-sm overflow-y-auto custom-scrollbar">
-            <div className="grid grid-cols-1 gap-2">
-              {sortedBrains.map((brain, idx) => {
-                const profit = brain.balance - INITIAL_CAPITAL;
-                const isProfitable = profit >= 0;
-                return (
-                  <div key={brain.id} className={`border p-2 rounded relative overflow-hidden transition-all duration-300 ${brain.status === 'REFLECTING' ? 'bg-blue-900/20 border-blue-800' : 'bg-black/40 border-gray-800'}`}>
+      {/* MAIN DASHBOARD */}
+      <div className="flex-1 grid grid-cols-12 gap-1 p-2 overflow-hidden">
+        
+        {/* COL 1: SWARM INTEL (BRAINS) */}
+        <div className="col-span-3 flex flex-col gap-1 overflow-hidden h-full">
+           <div className="bg-gray-900/50 border border-gray-800 p-2 rounded-t flex justify-between items-center">
+              <span className="text-xs font-bold text-gray-400 flex items-center gap-2"><Radio size={12}/> NEURAL SWARM</span>
+              <span className="text-[10px] text-gray-600">{brains.length} NODES ONLINE</span>
+           </div>
+           <div className="flex-1 overflow-y-auto custom-scrollbar space-y-1 pr-1">
+              {sortedBrains.map((brain) => (
+                 <div key={brain.id} className={`group relative p-2 rounded border transition-all ${brain.id === 'b_criminal' ? 'border-red-900/30 bg-red-900/5 hover:border-red-500/50' : brain.id === 'b_singularity' ? 'border-purple-900/30 bg-purple-900/5 hover:border-purple-500/50' : 'border-gray-800 bg-gray-900/40 hover:border-gray-600'}`}>
                     <div className="flex justify-between items-start mb-1">
-                      <div className="flex items-center gap-2">
-                          {brain.id === 'b_criminal' && <Skull size={10} className="text-red-500" />}
-                          <div className={`w-1.5 h-1.5 rounded-full ${brain.status === 'ACTIVE' && active ? 'bg-green-500 animate-pulse' : 'bg-gray-600'}`}></div>
-                          <span className={`font-bold text-sm ${brain.id === 'b_singularity' ? 'text-purple-300' : brain.id === 'b_criminal' ? 'text-red-500' : 'text-gray-200'}`}>{brain.name}</span>
-                      </div>
-                      <span className={`text-sm font-bold ${isProfitable ? 'text-green-400' : 'text-red-400'}`}>${brain.balance.toFixed(2)}</span>
+                       <div className="flex items-center gap-2">
+                          {brain.id === 'b_criminal' ? <Skull size={12} className="text-red-500"/> : brain.id === 'b_singularity' ? <Dna size={12} className="text-purple-500"/> : <Brain size={12} className="text-gray-500"/>}
+                          <span className={`text-xs font-bold ${brain.id === 'b_criminal' ? 'text-red-400' : brain.id === 'b_singularity' ? 'text-purple-300' : 'text-gray-300'}`}>{brain.name}</span>
+                       </div>
+                       <span className={`text-xs font-mono font-bold ${brain.balance >= INITIAL_CAPITAL ? 'text-green-400' : 'text-red-400'}`}>${brain.balance.toFixed(2)}</span>
                     </div>
-                    <div className="bg-black/50 p-1.5 rounded border border-gray-800/50 mb-1 flex gap-2 items-start">
-                        <MessageSquare size={10} className="text-gray-500 mt-0.5 shrink-0" />
-                        <span className="text-[10px] text-gray-300 font-mono leading-tight animate-in fade-in">{brain.current_thought}</span>
+                    {/* Live Thought Stream */}
+                    <div className="text-[10px] text-gray-500 font-mono truncate pl-5 border-l border-gray-800 ml-1">
+                       {brain.current_thought}
                     </div>
-                    <div className="flex justify-between text-[9px] text-gray-600 font-mono mt-1">
-                       <span>{brain.description}</span>
-                       <span>W:{brain.trades_won} L:{brain.trades_lost}</span>
+                    {/* Mini Stats */}
+                    <div className="flex gap-2 mt-1 pl-5 ml-1">
+                       <span className="text-[9px] text-gray-600">W: {brain.trades_won}</span>
+                       <span className="text-[9px] text-gray-600">L: {brain.trades_lost}</span>
                     </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-
-        {/* CENTER: CHART */}
-        <div className="col-span-4 flex flex-col gap-1 h-full">
-           <div className="flex-1 bg-gray-900 border border-green-900/30 rounded-sm relative p-2 flex flex-col overflow-hidden min-h-0">
-            <div className="absolute top-2 left-2 z-10 flex flex-col text-xs font-mono bg-black/50 p-1 rounded backdrop-blur-sm">
-              <span className="text-gray-400 font-bold flex items-center gap-2">
-                 BTC/USD 
-                 {connectionStatus === 'LIVE' ? <Wifi size={10} className="text-green-500"/> : <WifiOff size={10} className="text-red-500"/>}
-              </span>
-              <span className={`text-xl font-bold ${currentPrice > (priceData[priceData.length-2]?.price || 0) ? "text-green-400" : "text-red-400"}`}>
-                ${currentPrice.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
-              </span>
-            </div>
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={priceData}>
-                <defs>
-                  <linearGradient id="colorPrice" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.1}/>
-                    <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
-                  </linearGradient>
-                </defs>
-                <YAxis domain={['auto', 'auto']} hide />
-                <ReferenceLine y={currentPrice} stroke="rgba(255,255,255,0.2)" strokeDasharray="3 3" />
-                <Area type="monotone" dataKey="price" stroke="#10b981" strokeWidth={2} fillOpacity={1} fill="url(#colorPrice)" isAnimationActive={false} />
-                <Line type="monotone" dataKey="vwap" stroke="#8b5cf6" strokeWidth={1} dot={false} strokeDasharray="5 5" isAnimationActive={false} />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        {/* RIGHT: LOGS */}
-        <div className="col-span-3 flex flex-col gap-1 h-full">
-           <div className="flex-1 min-h-0 bg-gray-900 border border-green-900/30 rounded-sm p-2 overflow-hidden flex flex-col">
-             <h3 className="text-xs font-bold text-gray-400 mb-2 flex items-center gap-2 flex-none"><Zap size={12}/> OPEN POSITIONS</h3>
-             <div className="overflow-y-auto flex-1 custom-scrollbar">
-                <table className="w-full text-left text-[10px]">
-                  <thead>
-                    <tr className="text-gray-500 border-b border-gray-800">
-                      <th className="pb-1">BRAIN</th>
-                      <th className="pb-1">DIR</th>
-                      <th className="pb-1">PNL</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {activeSignals.map((sig) => {
-                      const pnlRaw = sig.direction === 'LONG' ? currentPrice - sig.entry_price : sig.entry_price - currentPrice;
-                      const isPos = pnlRaw > 0;
-                      return (
-                        <tr key={sig.id} className="border-b border-gray-800/50">
-                          <td className={`py-1 ${sig.brain === 'The Criminal' ? 'text-red-500 font-bold' : 'text-gray-300'}`}>{sig.brain.split(' ')[0]}</td>
-                          <td className={`py-1 ${sig.direction === 'LONG' ? 'text-green-400' : 'text-red-400'}`}>{sig.direction}</td>
-                          <td className={`py-1 font-bold ${isPos ? 'text-green-400' : 'text-red-400'}`}>
-                             {pnlRaw.toFixed(0)}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-             </div>
-          </div>
-           <div className="flex-1 min-h-0 bg-black border border-gray-800 rounded-sm p-2 flex flex-col font-mono text-[10px]">
-               <div className="flex justify-between items-center border-b border-gray-800 pb-1 mb-2 flex-none">
-                   <span className="text-green-500 font-bold flex items-center gap-2"><Terminal size={10}/> LOG</span>
-                </div>
-                <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col-reverse" ref={scrollRef}>
-                  {logs.map((log, i) => (
-                    <div key={i} className="mb-1 break-words leading-tight border-b border-gray-900/50 pb-1">
-                      <span className="text-gray-600 block text-[9px]">{log.time}</span>
-                      <span className={`${log.type === 'trade' ? 'text-blue-400' : log.type === 'dna' ? 'text-purple-400' : log.type === 'success' ? 'text-green-400' : log.type === 'error' ? 'text-red-500' : 'text-gray-400'}`}>
-                        {log.source}: {log.msg}
-                      </span>
-                    </div>
-                  ))}
-                </div>
+                 </div>
+              ))}
            </div>
         </div>
+
+        {/* COL 2: MAIN VIEWPORT (CHART + DNA) */}
+        <div className="col-span-6 flex flex-col gap-1 h-full">
+           {/* TABS */}
+           <div className="flex gap-1 mb-1">
+              <button onClick={() => setActiveTab('CHART')} className={`flex-1 py-1 text-xs border rounded ${activeTab==='CHART' ? 'bg-gray-800 border-gray-600 text-white' : 'border-gray-800 text-gray-500 hover:bg-gray-900'}`}>PRICE FEED</button>
+              <button onClick={() => setActiveTab('PERFORMANCE')} className={`flex-1 py-1 text-xs border rounded ${activeTab==='PERFORMANCE' ? 'bg-gray-800 border-gray-600 text-white' : 'border-gray-800 text-gray-500 hover:bg-gray-900'}`}>PERFORMANCE</button>
+              <button onClick={() => setActiveTab('DNA')} className={`flex-1 py-1 text-xs border rounded ${activeTab==='DNA' ? 'bg-gray-800 border-gray-600 text-white' : 'border-gray-800 text-gray-500 hover:bg-gray-900'}`}>SINGULARITY DNA</button>
+           </div>
+
+           <div className="flex-1 bg-gray-900/30 border border-gray-800 rounded relative overflow-hidden">
+              {activeTab === 'CHART' && (
+                 <>
+                    <div className="absolute top-2 left-2 z-10 bg-black/60 backdrop-blur px-2 py-1 rounded border border-gray-800">
+                       <span className="text-xl font-bold text-white">${currentPrice.toLocaleString(undefined, {minimumFractionDigits: 2})}</span>
+                       <span className="text-[10px] text-gray-400 block">BTC/USD LIVE TICKER</span>
+                    </div>
+                    <ResponsiveContainer width="100%" height="100%">
+                       <AreaChart data={priceData}>
+                          <defs>
+                             <linearGradient id="colorPrice" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="5%" stopColor="#10b981" stopOpacity={0.2}/>
+                                <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                             </linearGradient>
+                          </defs>
+                          <YAxis domain={['auto', 'auto']} hide />
+                          <Area type="monotone" dataKey="price" stroke="#10b981" strokeWidth={2} fill="url(#colorPrice)" isAnimationActive={false} />
+                          <Line type="monotone" dataKey="vwap" stroke="#8b5cf6" strokeWidth={1} dot={false} strokeDasharray="5 5" isAnimationActive={false} />
+                       </AreaChart>
+                    </ResponsiveContainer>
+                 </>
+              )}
+
+              {activeTab === 'DNA' && (
+                 <div className="h-full flex flex-col items-center justify-center p-4">
+                    <h3 className="text-purple-400 font-bold mb-4 flex items-center gap-2"><Dna size={16}/> SINGULARITY WEIGHTING MATRIX</h3>
+                    <ResponsiveContainer width="100%" height="80%">
+                       <RadarChart cx="50%" cy="50%" outerRadius="80%" data={globalStats.dnaData}>
+                          <PolarGrid stroke="#333" />
+                          <PolarAngleAxis dataKey="subject" tick={{ fill: '#666', fontSize: 10 }} />
+                          <PolarRadiusAxis angle={30} domain={[0, 40]} tick={false} />
+                          <Radar name="Weights" dataKey="A" stroke="#8884d8" fill="#8884d8" fillOpacity={0.6} />
+                          <Tooltip contentStyle={{backgroundColor: '#000', border: '1px solid #333'}}/>
+                       </RadarChart>
+                    </ResponsiveContainer>
+                 </div>
+              )}
+
+              {activeTab === 'PERFORMANCE' && (
+                 <div className="h-full p-4">
+                    <h3 className="text-blue-400 font-bold mb-4 flex items-center gap-2"><TrendingUp size={16}/> PROFIT DISTRIBUTION (USD)</h3>
+                    <ResponsiveContainer width="100%" height="80%">
+                       <BarChart data={globalStats.perfData} layout="vertical">
+                          <XAxis type="number" hide />
+                          <YAxis dataKey="name" type="category" width={80} tick={{fill:'#888', fontSize: 10}} />
+                          <Tooltip cursor={{fill: 'transparent'}} contentStyle={{backgroundColor: '#000', border: '1px solid #333'}} />
+                          <Bar dataKey="profit" barSize={20}>
+                             {globalStats.perfData.map((entry, index) => (
+                                <Cell key={`cell-${index}`} fill={entry.profit >= 0 ? '#4ade80' : '#ef4444'} />
+                             ))}
+                          </Bar>
+                       </BarChart>
+                    </ResponsiveContainer>
+                 </div>
+              )}
+           </div>
+        </div>
+
+        {/* COL 3: OPS (LOGS & TRADES) */}
+        <div className="col-span-3 flex flex-col gap-1 h-full">
+           <div className="flex-1 bg-gray-900/50 border border-gray-800 rounded flex flex-col overflow-hidden">
+              <div className="p-2 border-b border-gray-800 flex justify-between items-center bg-gray-900">
+                 <span className="text-xs font-bold text-gray-400 flex items-center gap-2"><Zap size={12}/> ACTIVE VECTORS</span>
+                 <span className="text-[10px] text-gray-600">{activeSignals.length} OPEN</span>
+              </div>
+              <div className="flex-1 overflow-y-auto custom-scrollbar p-1">
+                 {activeSignals.length === 0 ? (
+                    <div className="text-center py-10 text-gray-700 text-xs italic">SCANNING MARKET...</div>
+                 ) : (
+                    activeSignals.map(sig => (
+                       <div key={sig.id} className="mb-1 p-2 bg-black/40 border border-gray-800 rounded flex justify-between items-center">
+                          <div>
+                             <div className={`text-xs font-bold ${sig.brain === 'The Criminal' ? 'text-red-500' : 'text-gray-300'}`}>{sig.brain}</div>
+                             <div className="text-[10px] text-gray-500">{sig.reason}</div>
+                          </div>
+                          <div className="text-right">
+                             <div className={`text-xs font-bold ${sig.direction === 'LONG' ? 'text-green-400' : 'text-red-400'}`}>{sig.direction}</div>
+                             <div className="text-[10px] text-gray-500">@ {sig.entry_price.toFixed(0)}</div>
+                          </div>
+                       </div>
+                    ))
+                 )}
+              </div>
+           </div>
+
+           <div className="h-1/3 bg-black border border-gray-800 rounded flex flex-col overflow-hidden">
+              <div className="p-1 border-b border-gray-800 bg-gray-900 flex items-center gap-2">
+                 <Terminal size={10} className="text-gray-500"/> <span className="text-[10px] text-gray-400 font-bold">SYSTEM LOG</span>
+              </div>
+              <div className="flex-1 overflow-y-auto custom-scrollbar p-2 font-mono text-[9px] flex flex-col-reverse" ref={scrollRef}>
+                 {logs.map((log, i) => (
+                    <div key={i} className="mb-0.5 break-words">
+                       <span className="text-gray-600">[{log.time}]</span>{' '}
+                       <span className={`${log.type === 'trade' ? 'text-blue-400' : log.type === 'dna' ? 'text-purple-400' : log.type === 'success' ? 'text-green-400' : log.type === 'error' ? 'text-red-500' : 'text-gray-400'}`}>
+                          {log.source}: {log.msg}
+                       </span>
+                    </div>
+                 ))}
+              </div>
+           </div>
+        </div>
+
       </div>
+      
       <style>{`
-        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
-        .custom-scrollbar::-webkit-scrollbar-track { background: #111; }
+        .custom-scrollbar::-webkit-scrollbar { width: 3px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: #000; }
         .custom-scrollbar::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
-        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #444; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #555; }
       `}</style>
     </div>
   );
