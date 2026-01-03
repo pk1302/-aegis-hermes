@@ -128,7 +128,7 @@ export default function AegisHermesEngine() {
 
   useEffect(() => {
     if (!db) return;
-    // FIXED: Added 'live' collection segment to make path valid (6 segments)
+    // FIXED: Path now has 6 segments: artifacts / NAMESPACE / public / data / live / swarm_state_v9
     const docRef = doc(db, 'artifacts', APP_NAMESPACE, 'public', 'data', 'live', 'swarm_state_v9');
     
     const unsub = onSnapshot(docRef, (snap) => {
@@ -161,7 +161,7 @@ export default function AegisHermesEngine() {
     if (saveTimeout.current) clearTimeout(saveTimeout.current);
     saveTimeout.current = setTimeout(async () => {
       try {
-        // FIXED: Added 'live' collection segment here as well
+        // FIXED: Path matches above (6 segments)
         const docRef = doc(db, 'artifacts', APP_NAMESPACE, 'public', 'data', 'live', 'swarm_state_v9');
         const sanitizedBrains = newBrains.map(({ current_thought, ...rest }) => rest);
         await setDoc(docRef, { brains: sanitizedBrains, last_updated: Date.now() }, { merge: true });
@@ -329,21 +329,22 @@ export default function AegisHermesEngine() {
   };
 
   const addLog = (source: string, msg: string, type: 'info'|'success'|'warn'|'error'|'trade'|'evolve'|'dna' = 'info') => {
-    setLogs(prev => [{ time: new Date().toLocaleTimeString(), source, msg, type }, ...prev.slice(0, 49)]);
+    // Sanitized: Ensure msg is string
+    const safeMsg = typeof msg === 'object' ? JSON.stringify(msg) : String(msg);
+    setLogs(prev => [{ time: new Date().toLocaleTimeString(), source, msg: safeMsg, type }, ...prev.slice(0, 49)]);
   };
 
   const sortedBrains = [...brains].sort((a, b) => b.balance - a.balance);
 
   return (
     <div className="flex flex-col h-screen bg-[#0a0a0a] text-gray-300 font-mono overflow-hidden">
-      
       {/* TOP COMMAND BAR */}
       <header className="flex items-center justify-between px-4 py-2 border-b border-gray-800 bg-black/80 backdrop-blur-md z-50">
         <div className="flex items-center gap-4">
           <div className="flex flex-col">
              <h1 className="text-xl font-bold tracking-tight text-white flex items-center gap-2">
                 <Brain className="text-purple-500" size={20} />
-                AEGIS HERMES <span className="text-xs text-gray-500 px-1.5 py-0.5 rounded border border-gray-700">V9.0 COMMAND</span>
+                AEGIS HERMES <span className="text-xs text-gray-500 px-1.5 py-0.5 rounded border border-gray-700">V9.1 FIXED</span>
              </h1>
           </div>
           <div className="h-8 w-px bg-gray-800 mx-2"></div>
@@ -404,11 +405,9 @@ export default function AegisHermesEngine() {
                        </div>
                        <span className={`text-xs font-mono font-bold ${brain.balance >= INITIAL_CAPITAL ? 'text-green-400' : 'text-red-400'}`}>${brain.balance.toFixed(2)}</span>
                     </div>
-                    {/* Live Thought Stream */}
                     <div className="text-[10px] text-gray-500 font-mono truncate pl-5 border-l border-gray-800 ml-1">
                        {brain.current_thought}
                     </div>
-                    {/* Mini Stats */}
                     <div className="flex gap-2 mt-1 pl-5 ml-1">
                        <span className="text-[9px] text-gray-600">W: {brain.trades_won}</span>
                        <span className="text-[9px] text-gray-600">L: {brain.trades_lost}</span>
@@ -420,7 +419,6 @@ export default function AegisHermesEngine() {
 
         {/* COL 2: MAIN VIEWPORT (CHART + DNA) */}
         <div className="col-span-6 flex flex-col gap-1 h-full">
-           {/* TABS */}
            <div className="flex gap-1 mb-1">
               <button onClick={() => setActiveTab('CHART')} className={`flex-1 py-1 text-xs border rounded ${activeTab==='CHART' ? 'bg-gray-800 border-gray-600 text-white' : 'border-gray-800 text-gray-500 hover:bg-gray-900'}`}>PRICE FEED</button>
               <button onClick={() => setActiveTab('PERFORMANCE')} className={`flex-1 py-1 text-xs border rounded ${activeTab==='PERFORMANCE' ? 'bg-gray-800 border-gray-600 text-white' : 'border-gray-800 text-gray-500 hover:bg-gray-900'}`}>PERFORMANCE</button>
