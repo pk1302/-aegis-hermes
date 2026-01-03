@@ -1,0 +1,18 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Global Styles for Dark Theme Dashboard */
+body {
+  margin: 0;
+  padding: 0;
+  background-color: #0a0a0a; /* Matches the dashboard background */
+  color: #d1d5db; /* Tailwind gray-300 */
+  font-family: monospace; /* Preserves the tech aesthetic */
+  overflow: hidden; /* Prevents scrollbars on the main body */
+}
+
+#root {
+  height: 100vh;
+  width: 100vw;
+}
