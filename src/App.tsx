@@ -2,21 +2,22 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
   Activity, Zap, Brain, Terminal, Play, Pause, Server, RefreshCw, Dna, Wifi, WifiOff, 
   MessageSquare, Radio, Loader2, CheckCircle2, User as UserIcon, Skull, 
-  LayoutDashboard, PieChart, TrendingUp, AlertOctagon, Sword, Globe, ArrowUpRight, ArrowDownRight
+  LayoutDashboard, PieChart, TrendingUp, AlertOctagon, Sword, Globe
 } from 'lucide-react';
 import { 
   AreaChart, Area, XAxis, YAxis, ResponsiveContainer, ReferenceLine, Line, LineChart,
   Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Tooltip, BarChart, Bar, Cell
 } from 'recharts';
 
+// --- FIREBASE IMPORTS ---
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged, User } from 'firebase/auth';
-import { getFirestore, doc, setDoc, onSnapshot } from 'firebase/firestore';
+import { getFirestore, doc, setDoc, onSnapshot, getDoc } from 'firebase/firestore';
 
+// --- CONFIGURATION ---
 const INITIAL_CAPITAL = 100;
 const APP_NAMESPACE = 'aegis-core-v1'; 
 
-// YOUR FIREBASE CONFIG
 const firebaseConfig = {
   apiKey: "AIzaSyAwwFWF0FScFWKTvteUDgVQFJ3dbh8VxGY",
   authDomain: "aegis-hermes.firebaseapp.com",
@@ -31,7 +32,27 @@ const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 const auth = getAuth(app);
 
-const DEFAULT_BRAINS = [
+// --- TYPE DEFINITIONS ---
+type MarketRegime = 'LOW_VOL_RANGE' | 'BULL_TREND' | 'BEAR_TREND' | 'HIGH_VOL_CHOP' | 'FLASH_CRASH';
+type SignalDirection = 'LONG' | 'SHORT' | 'NEUTRAL';
+
+interface Signal {
+  id: string; brain: string; timestamp: number; symbol: string; direction: SignalDirection;
+  confidence: number; entry_price: number; tp: number; sl: number; size: number;
+  regime: MarketRegime; reason: string;
+}
+
+interface BrainState {
+  id: string; name: string; status: 'ACTIVE' | 'REFLECTING' | 'COOLDOWN';
+  balance: number; trades_won: number; trades_lost: number;
+  lastSignal: string; current_thought: string; description: string; color: string;
+  strategy_bias: string; base_aggression: number; adaptive_mod: number;
+  confidence_threshold: number; learning_generation: number;
+  dna_weights?: Record<string, number>;
+}
+
+// --- DEFAULT STATE ---
+const DEFAULT_BRAINS: BrainState[] = [
   { id: 'b_rotter', name: 'Paul Rotter', status: 'ACTIVE', balance: INITIAL_CAPITAL, trades_won: 0, trades_lost: 0, lastSignal: 'Init...', current_thought: 'Calibrating L2 feed...', description: 'HFT/Order Book', color: '#10b981', strategy_bias: 'hft', base_aggression: 0.9, adaptive_mod: 0, confidence_threshold: 0.85, learning_generation: 0 },
   { id: 'b_volman', name: 'Bob Volman', status: 'ACTIVE', balance: INITIAL_CAPITAL, trades_won: 0, trades_lost: 0, lastSignal: 'Init...', current_thought: 'Measuring tick volatility...', description: 'Fractal Price Action', color: '#3b82f6', strategy_bias: 'scalp', base_aggression: 0.6, adaptive_mod: 0, confidence_threshold: 0.80, learning_generation: 0 },
   { id: 'b_brooks', name: 'Al Brooks', status: 'ACTIVE', balance: INITIAL_CAPITAL, trades_won: 0, trades_lost: 0, lastSignal: 'Init...', current_thought: 'Waiting for bar close...', description: 'Probabilistic', color: '#f59e0b', strategy_bias: 'swing', base_aggression: 0.4, adaptive_mod: 0, confidence_threshold: 0.75, learning_generation: 0 },
@@ -42,63 +63,64 @@ const DEFAULT_BRAINS = [
   { id: 'b_singularity', name: 'The Singularity', status: 'ACTIVE', balance: INITIAL_CAPITAL, trades_won: 0, trades_lost: 0, lastSignal: 'Synthesizing...', current_thought: 'Analyzing swarm intelligence...', description: 'Meta-Evolutionary', color: '#ffffff', strategy_bias: 'meta', base_aggression: 0.1, adaptive_mod: 0, confidence_threshold: 0.70, learning_generation: 1, dna_weights: { 'b_rotter': 0.14, 'b_volman': 0.14, 'b_brooks': 0.14, 'b_diamond': 0.14, 'b_hougaard': 0.14, 'b_medhat': 0.14, 'b_criminal': 0.16 } },
 ];
 
-export default function App() {
+export default function AegisHermesEngine() {
+  // System
   const [active, setActive] = useState(false);
+  const [panicMode, setPanicMode] = useState(false);
   const [user, setUser] = useState<User | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<'CONNECTING' | 'LIVE' | 'ERROR'>('CONNECTING');
   const [dataLoaded, setDataLoaded] = useState(false); 
   const [isSaving, setIsSaving] = useState(false);
+  const wsRef = useRef<WebSocket | null>(null);
+  
+  // UI State
   const [activeTab, setActiveTab] = useState<'CHART' | 'PERFORMANCE' | 'DNA'>('CHART');
+
+  // Data
   const [priceData, setPriceData] = useState<{time: string, price: number, vwap: number}[]>([]);
   const [currentPrice, setCurrentPrice] = useState(0);
-  const [brains, setBrains] = useState<any[]>(DEFAULT_BRAINS);
-  const [logs, setLogs] = useState<any[]>([]);
-  const [activeSignals, setActiveSignals] = useState<any[]>([]);
-  const wsRef = useRef<WebSocket | null>(null);
-  const priceDataRef = useRef<any[]>([]);
+  const [brains, setBrains] = useState<BrainState[]>(DEFAULT_BRAINS);
+  const [logs, setLogs] = useState<{time: string, source: string, msg: string, type: string}[]>([]);
+  const [activeSignals, setActiveSignals] = useState<Signal[]>([]);
+  
+  // Refs
+  const priceDataRef = useRef<{time: string, price: number, vwap: number}[]>([]);
   const evolutionTickRef = useRef(0);
-  const saveTimeout = useRef<any>(null);
+  const saveTimeout = useRef<NodeJS.Timeout | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { priceDataRef.current = priceData; }, [priceData]);
 
+  // --- STATS CALCULATION ---
   const globalStats = useMemo(() => {
-    const totalEquity = brains.reduce((acc, b) => acc + (b.balance || INITIAL_CAPITAL), 0);
+    const totalEquity = brains.reduce((acc, b) => acc + b.balance, 0);
     const totalStart = brains.length * INITIAL_CAPITAL;
     const netPnL = totalEquity - totalStart;
-    const totalWins = brains.reduce((acc, b) => acc + (b.trades_won || 0), 0);
-    const totalLosses = brains.reduce((acc, b) => acc + (b.trades_lost || 0), 0);
-    
-    const totalTrades = totalWins + totalLosses;
-    const winRate = totalTrades > 0 ? (totalWins / totalTrades) * 100 : 0;
+    const totalWins = brains.reduce((acc, b) => acc + b.trades_won, 0);
+    const totalLosses = brains.reduce((acc, b) => acc + b.trades_lost, 0);
+    const winRate = totalWins + totalLosses > 0 ? (totalWins / (totalWins + totalLosses)) * 100 : 0;
     
     const perfData = brains.map(b => ({
       name: b.name.split(' ')[1] || b.name,
-      profit: (b.balance || INITIAL_CAPITAL) - INITIAL_CAPITAL,
+      profit: b.balance - INITIAL_CAPITAL,
+      winRate: (b.trades_won / (b.trades_won + b.trades_lost || 1)) * 100,
       color: b.color
     })).sort((a,b) => b.profit - a.profit);
 
     const singularity = brains.find(b => b.id === 'b_singularity');
     const dnaData = singularity?.dna_weights ? Object.entries(singularity.dna_weights).map(([k, v]) => ({
       subject: k.replace('b_', '').toUpperCase(),
-      A: (v as number) * 100,
+      A: v * 100,
       fullMark: 100
     })) : [];
 
     return { totalEquity, netPnL, winRate, totalWins, totalLosses, perfData, dnaData };
   }, [brains]);
 
-  const addLog = (source: string, msg: any, type: string = 'info') => {
-    const safeMsg = typeof msg === 'object' ? JSON.stringify(msg) : String(msg);
-    setLogs(prev => [{ time: new Date().toLocaleTimeString(), source, msg: safeMsg, type }, ...prev.slice(0, 49)]);
-  };
-
+  // --- AUTH & LOAD (PUBLIC CHANNEL) ---
   useEffect(() => {
-    const initAuth = async () => { 
-        try {
-            await signInAnonymously(auth); 
-        } catch(e) { console.error(e); }
-    };
+    if (!auth) return;
+    const initAuth = async () => { await signInAnonymously(auth); };
     initAuth();
     const unsubscribe = onAuthStateChanged(auth, (u) => { if (u) setUser(u); });
     return () => unsubscribe();
@@ -106,73 +128,86 @@ export default function App() {
 
   useEffect(() => {
     if (!db) return;
+    // FIXED: Path now has 6 segments: artifacts / NAMESPACE / public / data / live / swarm_state_v9
     const docRef = doc(db, 'artifacts', APP_NAMESPACE, 'public', 'data', 'live', 'swarm_state_v9');
     
     const unsub = onSnapshot(docRef, (snap) => {
       if (snap.exists() && snap.data().brains) {
-        setBrains(prev => DEFAULT_BRAINS.map(def => {
-          const saved = snap.data().brains.find((b: any) => b.id === def.id);
-          return saved ? { ...def, ...saved } : def;
-        }));
+        setBrains(prev => {
+           return DEFAULT_BRAINS.map(def => {
+              const saved = snap.data().brains.find((b: any) => b.id === def.id);
+              if (saved) {
+                 const newBrain = { ...def, ...saved };
+                 if (def.id === 'b_singularity' && !saved.dna_weights) newBrain.dna_weights = def.dna_weights;
+                 return newBrain;
+              }
+              return def;
+           });
+        });
         setDataLoaded(true);
-        if (!active) addLog('DATABASE', 'Sync: Received Update.', 'success');
+        if (!active) addLog('DATABASE', 'Sync: Received Swarm Update.', 'success');
       } else {
         if (!dataLoaded) addLog('DATABASE', 'Waiting for Bot Signal...', 'warn');
-        // Initial setup for new user
-        if(!dataLoaded && active) {
-             setDoc(docRef, { brains: DEFAULT_BRAINS, last_updated: Date.now() }, { merge: true });
-        }
       }
-    }, (error) => {
-        addLog('DATABASE', `Error: ${error.message}`, 'error');
     });
     return () => unsub();
   }, [active]);
 
-  const triggerSave = (newBrains: any[]) => {
+  // --- SAVE (Only if Active/Master) ---
+  const triggerSave = (newBrains: BrainState[]) => {
     if (!db || !dataLoaded || !active) return;
+    
     setIsSaving(true);
     if (saveTimeout.current) clearTimeout(saveTimeout.current);
     saveTimeout.current = setTimeout(async () => {
       try {
+        // FIXED: Path matches above (6 segments)
         const docRef = doc(db, 'artifacts', APP_NAMESPACE, 'public', 'data', 'live', 'swarm_state_v9');
-        const sanitized = newBrains.map(({ current_thought, ...rest }) => rest);
-        await setDoc(docRef, { brains: sanitized, last_updated: Date.now() }, { merge: true });
+        const sanitizedBrains = newBrains.map(({ current_thought, ...rest }) => rest);
+        await setDoc(docRef, { brains: sanitizedBrains, last_updated: Date.now() }, { merge: true });
         setIsSaving(false);
       } catch (e) { setIsSaving(false); }
     }, 200); 
   };
 
+  // --- WEBSOCKET ---
   useEffect(() => {
     if (!active || !dataLoaded) {
-       if (wsRef.current) wsRef.current.close();
+       if (wsRef.current) { wsRef.current.close(); wsRef.current = null; }
        setConnectionStatus('CONNECTING');
        return;
     }
-    const ws = new WebSocket('wss://ws-feed.exchange.coinbase.com');
-    wsRef.current = ws;
-    ws.onopen = () => {
-        setConnectionStatus('LIVE');
-        addLog('NETWORK', 'Live Ticker Active.', 'success');
-        ws.send(JSON.stringify({ type: "subscribe", product_ids: ["BTC-USD"], channels: ["ticker"] }));
+    const connectWS = () => {
+        const ws = new WebSocket('wss://ws-feed.exchange.coinbase.com');
+        wsRef.current = ws;
+        ws.onopen = () => {
+            setConnectionStatus('LIVE');
+            addLog('NETWORK', 'Live Ticker Active.', 'success');
+            ws.send(JSON.stringify({ type: "subscribe", product_ids: ["BTC-USD"], channels: ["ticker"] }));
+        };
+        ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            if (data.type === 'ticker' && data.price) {
+                const price = parseFloat(data.price);
+                setCurrentPrice(price);
+                setPriceData(prev => {
+                    const lastVwap = prev.length > 0 ? prev[prev.length-1].vwap : price;
+                    const newPoint = { time: new Date().toLocaleTimeString(), price: price, vwap: (lastVwap * 0.99) + (price * 0.01) };
+                    const newData = [...prev, newPoint];
+                    if (newData.length > 50) newData.shift();
+                    return newData;
+                });
+                processBrains(price);
+            }
+        };
+        ws.onerror = () => { setConnectionStatus('ERROR'); };
+        ws.onclose = () => { if (active) setTimeout(connectWS, 1000); };
     };
-    ws.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        if (data.type === 'ticker' && data.price) {
-            const price = parseFloat(data.price);
-            setCurrentPrice(price);
-            setPriceData(prev => {
-                const lastVwap = prev.length > 0 ? prev[prev.length-1].vwap : price;
-                const newData = [...prev, { time: new Date().toLocaleTimeString(), price: price, vwap: (lastVwap * 0.99) + (price * 0.01) }];
-                return newData.slice(-50);
-            });
-            processBrains(price);
-        }
-    };
-    ws.onerror = () => setConnectionStatus('ERROR');
-    return () => { ws.close(); };
+    connectWS();
+    return () => { if (wsRef.current) wsRef.current.close(); };
   }, [active, dataLoaded]);
 
+  // --- LOGIC ---
   const generateThought = (brain: BrainState, price: number, vwap: number): string => {
      if (brain.status === 'REFLECTING') return 'Analyzing loss pattern...';
      const diff = price - vwap;
@@ -293,131 +328,217 @@ export default function App() {
       addLog(brain.name, `${dir} | ${reason}`, brain.id === 'b_singularity' ? 'dna' : 'trade');
   };
 
-  // --- SORTING LOGIC: AUTOMATIC EQUITY RANKING ---
+  const addLog = (source: string, msg: string, type: 'info'|'success'|'warn'|'error'|'trade'|'evolve'|'dna' = 'info') => {
+    // Sanitized: Ensure msg is string
+    const safeMsg = typeof msg === 'object' ? JSON.stringify(msg) : String(msg);
+    setLogs(prev => [{ time: new Date().toLocaleTimeString(), source, msg: safeMsg, type }, ...prev.slice(0, 49)]);
+  };
+
   const sortedBrains = [...brains].sort((a, b) => b.balance - a.balance);
 
   return (
     <div className="flex flex-col h-screen bg-[#0a0a0a] text-gray-300 font-mono overflow-hidden">
-      {/* HEADER */}
-      <header className="flex items-center justify-between px-4 py-2 border-b border-gray-800 bg-black/80 backdrop-blur-md z-50 h-14">
+      
+      {/* TOP COMMAND BAR */}
+      <header className="flex items-center justify-between px-4 py-2 border-b border-gray-800 bg-black/80 backdrop-blur-md z-50">
         <div className="flex items-center gap-4">
-          <h1 className="text-xl font-bold tracking-tight text-white flex items-center gap-2">
-            <Brain className="text-purple-500" size={20} /> AEGIS HERMES <span className="text-xs text-gray-500 px-1.5 py-0.5 rounded border border-gray-700">V9.3</span>
-          </h1>
+          <div className="flex flex-col">
+             <h1 className="text-xl font-bold tracking-tight text-white flex items-center gap-2">
+                <Brain className="text-purple-500" size={20} />
+                AEGIS HERMES <span className="text-xs text-gray-500 px-1.5 py-0.5 rounded border border-gray-700">V9.1 FIXED</span>
+             </h1>
+          </div>
+          <div className="h-8 w-px bg-gray-800 mx-2"></div>
+          {/* AGGREGATE METRICS */}
           <div className="flex gap-6 text-xs">
-             <div><span className="text-gray-500 block text-[10px]">SWARM EQUITY</span><span className="text-white font-bold text-lg">${globalStats.totalEquity.toFixed(2)}</span></div>
-             <div><span className="text-gray-500 block text-[10px]">NET PNL</span><span className={`font-bold text-lg ${globalStats.netPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>{globalStats.netPnL.toFixed(2)}</span></div>
+             <div>
+                <span className="text-gray-500 block text-[10px]">SWARM EQUITY</span>
+                <span className="text-white font-bold text-lg">${globalStats.totalEquity.toLocaleString(undefined, {minimumFractionDigits: 2})}</span>
+             </div>
+             <div>
+                <span className="text-gray-500 block text-[10px]">NET PNL (24H)</span>
+                <span className={`font-bold text-lg ${globalStats.netPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                   {globalStats.netPnL >= 0 ? '+' : ''}{globalStats.netPnL.toFixed(2)}
+                </span>
+             </div>
+             <div>
+                <span className="text-gray-500 block text-[10px]">GLOBAL WIN RATE</span>
+                <span className="text-blue-400 font-bold text-lg">{globalStats.winRate.toFixed(1)}%</span>
+             </div>
           </div>
         </div>
+
         <div className="flex items-center gap-3">
-           <div className="flex items-center gap-1 text-[10px] text-gray-500 border-r border-gray-800 pr-3"><Globe size={10} /> BROADCAST MODE</div>
-           <div className={`px-3 py-1 rounded text-[10px] border ${connectionStatus === 'LIVE' ? 'border-green-900 text-green-400' : 'border-red-900 text-red-400'}`}>{connectionStatus}</div>
-           <button onClick={() => setActive(!active)} disabled={!dataLoaded} className={`px-4 py-1.5 rounded text-sm font-bold border ${active ? 'border-red-900 text-red-400' : 'border-green-900 text-green-400'}`}>{active ? 'HALT' : 'ENGAGE'}</button>
+           <div className="flex items-center gap-1 text-[10px] text-gray-500 border-r border-gray-800 pr-3">
+              <Globe size={10} /> BROADCAST MODE
+           </div>
+           <div className={`flex items-center gap-2 px-3 py-1 rounded text-[10px] border ${connectionStatus === 'LIVE' ? 'border-green-900 bg-green-900/10 text-green-400' : 'border-red-900 bg-red-900/10 text-red-400'}`}>
+              {connectionStatus === 'LIVE' ? <Wifi size={12}/> : <WifiOff size={12}/>}
+              {connectionStatus}
+           </div>
+           <button 
+            onClick={() => setActive(!active)}
+            disabled={!dataLoaded}
+            className={`flex items-center gap-2 px-4 py-1.5 rounded text-sm font-bold transition-all border ${active ? 'border-red-900 bg-red-900/20 text-red-400' : 'border-green-900 bg-green-900/20 text-green-400 hover:bg-green-900/30'}`}
+          >
+            {active ? <Pause size={16} /> : <Play size={16} />}
+            {active ? 'HALT BOT' : 'ENGAGE BOT'}
+          </button>
         </div>
       </header>
 
-      {/* DASHBOARD */}
+      {/* MAIN DASHBOARD */}
       <div className="flex-1 grid grid-cols-12 gap-1 p-2 overflow-hidden">
         
-        {/* LEFT COL: NEURAL SWARM */}
+        {/* COL 1: SWARM INTEL (BRAINS) */}
         <div className="col-span-3 flex flex-col gap-1 overflow-hidden h-full">
-           <div className="bg-gray-900/50 border border-gray-800 p-2 rounded-t text-xs font-bold text-gray-400">NEURAL SWARM (RANKED)</div>
-           <div className="flex-1 overflow-y-auto custom-scrollbar space-y-1">
-              {sortedBrains.map((brain, index) => (
-                 <div key={brain.id} className={`p-2 rounded border transition-all ${brain.id === 'b_criminal' ? 'border-red-900/30 bg-red-900/5' : 'border-gray-800 bg-gray-900/40'}`}>
-                    <div className="flex justify-between items-start">
+           <div className="bg-gray-900/50 border border-gray-800 p-2 rounded-t flex justify-between items-center">
+              <span className="text-xs font-bold text-gray-400 flex items-center gap-2"><Radio size={12}/> NEURAL SWARM</span>
+              <span className="text-[10px] text-gray-600">{brains.length} NODES ONLINE</span>
+           </div>
+           <div className="flex-1 overflow-y-auto custom-scrollbar space-y-1 pr-1">
+              {sortedBrains.map((brain) => (
+                 <div key={brain.id} className={`group relative p-2 rounded border transition-all ${brain.id === 'b_criminal' ? 'border-red-900/30 bg-red-900/5 hover:border-red-500/50' : brain.id === 'b_singularity' ? 'border-purple-900/30 bg-purple-900/5 hover:border-purple-500/50' : 'border-gray-800 bg-gray-900/40 hover:border-gray-600'}`}>
+                    <div className="flex justify-between items-start mb-1">
                        <div className="flex items-center gap-2">
-                          <span className="text-xs text-gray-600 font-mono">#{index + 1}</span>
                           {brain.id === 'b_criminal' ? <Skull size={12} className="text-red-500"/> : brain.id === 'b_singularity' ? <Dna size={12} className="text-purple-500"/> : <Brain size={12} className="text-gray-500"/>}
-                          <span className={`text-xs font-bold ${brain.id === 'b_criminal' ? 'text-red-400' : 'text-gray-300'}`}>{brain.name}</span>
+                          <span className={`text-xs font-bold ${brain.id === 'b_criminal' ? 'text-red-400' : brain.id === 'b_singularity' ? 'text-purple-300' : 'text-gray-300'}`}>{brain.name}</span>
                        </div>
-                       <span className={`text-xs font-bold ${brain.balance >= INITIAL_CAPITAL ? 'text-green-400' : 'text-red-400'}`}>${brain.balance.toFixed(2)}</span>
+                       <span className={`text-xs font-mono font-bold ${brain.balance >= INITIAL_CAPITAL ? 'text-green-400' : 'text-red-400'}`}>${brain.balance.toFixed(2)}</span>
                     </div>
-                    {/* EXPANDED THOUGHTS & STATS */}
-                    <div className="text-[10px] text-gray-400 mt-1 pl-6">
-                        <div className="italic mb-1 opacity-70">"{brain.current_thought}"</div>
-                        <div className="flex gap-3 text-[9px] text-gray-500 uppercase tracking-wider">
-                            <span>W: <span className="text-gray-300">{brain.trades_won}</span></span>
-                            <span>L: <span className="text-gray-300">{brain.trades_lost}</span></span>
-                            <span>GEN: <span className="text-purple-400">{brain.learning_generation}</span></span>
-                        </div>
+                    {/* Live Thought Stream */}
+                    <div className="text-[10px] text-gray-500 font-mono truncate pl-5 border-l border-gray-800 ml-1">
+                       {brain.current_thought}
+                    </div>
+                    {/* Mini Stats */}
+                    <div className="flex gap-2 mt-1 pl-5 ml-1">
+                       <span className="text-[9px] text-gray-600">W: {brain.trades_won}</span>
+                       <span className="text-[9px] text-gray-600">L: {brain.trades_lost}</span>
                     </div>
                  </div>
               ))}
            </div>
         </div>
 
-        {/* CENTER COL: CHART & DNA */}
+        {/* COL 2: MAIN VIEWPORT (CHART + DNA) */}
         <div className="col-span-6 flex flex-col gap-1 h-full">
+           {/* TABS */}
            <div className="flex gap-1 mb-1">
-              <button onClick={() => setActiveTab('CHART')} className={`flex-1 py-1 text-xs border rounded ${activeTab==='CHART' ? 'bg-gray-800 text-white' : 'text-gray-500'}`}>PRICE</button>
-              <button onClick={() => setActiveTab('DNA')} className={`flex-1 py-1 text-xs border rounded ${activeTab==='DNA' ? 'bg-gray-800 text-white' : 'text-gray-500'}`}>DNA</button>
+              <button onClick={() => setActiveTab('CHART')} className={`flex-1 py-1 text-xs border rounded ${activeTab==='CHART' ? 'bg-gray-800 border-gray-600 text-white' : 'border-gray-800 text-gray-500 hover:bg-gray-900'}`}>PRICE FEED</button>
+              <button onClick={() => setActiveTab('PERFORMANCE')} className={`flex-1 py-1 text-xs border rounded ${activeTab==='PERFORMANCE' ? 'bg-gray-800 border-gray-600 text-white' : 'border-gray-800 text-gray-500 hover:bg-gray-900'}`}>PERFORMANCE</button>
+              <button onClick={() => setActiveTab('DNA')} className={`flex-1 py-1 text-xs border rounded ${activeTab==='DNA' ? 'bg-gray-800 border-gray-600 text-white' : 'border-gray-800 text-gray-500 hover:bg-gray-900'}`}>SINGULARITY DNA</button>
            </div>
+
            <div className="flex-1 bg-gray-900/30 border border-gray-800 rounded relative overflow-hidden">
-              {activeTab === 'CHART' ? (
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={priceData}>
-                    <YAxis domain={['auto', 'auto']} hide />
-                    <Area type="monotone" dataKey="price" stroke="#10b981" fillOpacity={0.1} isAnimationActive={false} />
-                  </AreaChart>
-                </ResponsiveContainer>
-              ) : (
-                <ResponsiveContainer width="100%" height="100%">
-                   <RadarChart cx="50%" cy="50%" outerRadius="80%" data={globalStats.dnaData}>
-                      <PolarGrid stroke="#333" />
-                      <PolarAngleAxis dataKey="subject" tick={{ fill: '#666', fontSize: 10 }} />
-                      <Radar name="Weights" dataKey="A" stroke="#8884d8" fill="#8884d8" fillOpacity={0.6} />
-                   </RadarChart>
-                </ResponsiveContainer>
+              {activeTab === 'CHART' && (
+                 <>
+                    <div className="absolute top-2 left-2 z-10 bg-black/60 backdrop-blur px-2 py-1 rounded border border-gray-800">
+                       <span className="text-xl font-bold text-white">${currentPrice.toLocaleString(undefined, {minimumFractionDigits: 2})}</span>
+                       <span className="text-[10px] text-gray-400 block">BTC/USD LIVE TICKER</span>
+                    </div>
+                    <ResponsiveContainer width="100%" height="100%">
+                       <AreaChart data={priceData}>
+                          <defs>
+                             <linearGradient id="colorPrice" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="5%" stopColor="#10b981" stopOpacity={0.2}/>
+                                <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                             </linearGradient>
+                          </defs>
+                          <YAxis domain={['auto', 'auto']} hide />
+                          <Area type="monotone" dataKey="price" stroke="#10b981" strokeWidth={2} fill="url(#colorPrice)" isAnimationActive={false} />
+                          <Line type="monotone" dataKey="vwap" stroke="#8b5cf6" strokeWidth={1} dot={false} strokeDasharray="5 5" isAnimationActive={false} />
+                       </AreaChart>
+                    </ResponsiveContainer>
+                 </>
+              )}
+
+              {activeTab === 'DNA' && (
+                 <div className="h-full flex flex-col items-center justify-center p-4">
+                    <h3 className="text-purple-400 font-bold mb-4 flex items-center gap-2"><Dna size={16}/> SINGULARITY WEIGHTING MATRIX</h3>
+                    <ResponsiveContainer width="100%" height="80%">
+                       <RadarChart cx="50%" cy="50%" outerRadius="80%" data={globalStats.dnaData}>
+                          <PolarGrid stroke="#333" />
+                          <PolarAngleAxis dataKey="subject" tick={{ fill: '#666', fontSize: 10 }} />
+                          <PolarRadiusAxis angle={30} domain={[0, 40]} tick={false} />
+                          <Radar name="Weights" dataKey="A" stroke="#8884d8" fill="#8884d8" fillOpacity={0.6} />
+                          <Tooltip contentStyle={{backgroundColor: '#000', border: '1px solid #333'}}/>
+                       </RadarChart>
+                    </ResponsiveContainer>
+                 </div>
+              )}
+
+              {activeTab === 'PERFORMANCE' && (
+                 <div className="h-full p-4">
+                    <h3 className="text-blue-400 font-bold mb-4 flex items-center gap-2"><TrendingUp size={16}/> PROFIT DISTRIBUTION (USD)</h3>
+                    <ResponsiveContainer width="100%" height="80%">
+                       <BarChart data={globalStats.perfData} layout="vertical">
+                          <XAxis type="number" hide />
+                          <YAxis dataKey="name" type="category" width={80} tick={{fill:'#888', fontSize: 10}} />
+                          <Tooltip cursor={{fill: 'transparent'}} contentStyle={{backgroundColor: '#000', border: '1px solid #333'}} />
+                          <Bar dataKey="profit" barSize={20}>
+                             {globalStats.perfData.map((entry, index) => (
+                                <Cell key={`cell-${index}`} fill={entry.profit >= 0 ? '#4ade80' : '#ef4444'} />
+                             ))}
+                          </Bar>
+                       </BarChart>
+                    </ResponsiveContainer>
+                 </div>
               )}
            </div>
         </div>
 
-        {/* RIGHT COL: ACTIVE TRADES & LOGS */}
+        {/* COL 3: OPS (LOGS & TRADES) */}
         <div className="col-span-3 flex flex-col gap-1 h-full">
-           {/* ACTIVE TRADES PANEL */}
            <div className="flex-1 bg-gray-900/50 border border-gray-800 rounded flex flex-col overflow-hidden">
-              <div className="p-2 border-b border-gray-800 bg-gray-900 flex justify-between items-center">
-                 <span className="text-xs font-bold text-gray-400 flex items-center gap-2"><Zap size={12}/> ACTIVE TRADES</span>
+              <div className="p-2 border-b border-gray-800 flex justify-between items-center bg-gray-900">
+                 <span className="text-xs font-bold text-gray-400 flex items-center gap-2"><Zap size={12}/> ACTIVE VECTORS</span>
                  <span className="text-[10px] text-gray-600">{activeSignals.length} OPEN</span>
               </div>
               <div className="flex-1 overflow-y-auto custom-scrollbar p-1">
                  {activeSignals.length === 0 ? (
                     <div className="text-center py-10 text-gray-700 text-xs italic">SCANNING MARKET...</div>
                  ) : (
-                    activeSignals.map(sig => {
-                        const pnl = sig.direction === 'LONG' ? currentPrice - sig.entry_price : sig.entry_price - currentPrice;
-                        return (
-                           <div key={sig.id} className="mb-1 p-2 bg-black/40 border border-gray-800 rounded">
-                              <div className="flex justify-between items-center mb-1">
-                                 <span className={`text-xs font-bold ${sig.brain === 'The Criminal' ? 'text-red-500' : 'text-gray-300'}`}>{sig.brain}</span>
-                                 <span className={`text-xs font-bold ${sig.direction === 'LONG' ? 'text-green-400' : 'text-red-400'}`}>{sig.direction}</span>
-                              </div>
-                              <div className="flex justify-between text-[10px] text-gray-500">
-                                 <span>EP: {sig.entry_price.toFixed(2)}</span>
-                                 <span className={pnl >= 0 ? 'text-green-400' : 'text-red-400'}>{pnl >= 0 ? '+' : ''}{pnl.toFixed(2)}</span>
-                              </div>
-                              <div className="flex justify-between text-[9px] text-gray-600 mt-1 border-t border-gray-800 pt-1">
-                                 <span>TP: {sig.tp.toFixed(0)}</span>
-                                 <span>SL: {sig.sl.toFixed(0)}</span>
-                              </div>
-                           </div>
-                        );
-                    })
+                    activeSignals.map(sig => (
+                       <div key={sig.id} className="mb-1 p-2 bg-black/40 border border-gray-800 rounded flex justify-between items-center">
+                          <div>
+                             <div className={`text-xs font-bold ${sig.brain === 'The Criminal' ? 'text-red-500' : 'text-gray-300'}`}>{sig.brain}</div>
+                             <div className="text-[10px] text-gray-500">{sig.reason}</div>
+                          </div>
+                          <div className="text-right">
+                             <div className={`text-xs font-bold ${sig.direction === 'LONG' ? 'text-green-400' : 'text-red-400'}`}>{sig.direction}</div>
+                             <div className="text-[10px] text-gray-500">@ {sig.entry_price.toFixed(0)}</div>
+                          </div>
+                       </div>
+                    ))
                  )}
               </div>
            </div>
 
-           {/* LOGS PANEL */}
-           <div className="h-1/3 bg-gray-900/50 border border-gray-800 rounded p-2 text-[10px] overflow-y-auto custom-scrollbar">
-              <div className="font-bold text-gray-500 mb-2">SYSTEM LOG</div>
-              {logs.map((log, i) => (
-                <div key={i} className="mb-1"><span className="text-gray-600">[{log.time}]</span> <span className={log.type === 'error' ? 'text-red-400' : 'text-gray-400'}>{log.source}: {log.msg}</span></div>
-              ))}
+           <div className="h-1/3 bg-black border border-gray-800 rounded flex flex-col overflow-hidden">
+              <div className="p-1 border-b border-gray-800 bg-gray-900 flex items-center gap-2">
+                 <Terminal size={10} className="text-gray-500"/> <span className="text-[10px] text-gray-400 font-bold">SYSTEM LOG</span>
+              </div>
+              <div className="flex-1 overflow-y-auto custom-scrollbar p-2 font-mono text-[9px] flex flex-col-reverse" ref={scrollRef}>
+                 {logs.map((log, i) => (
+                    <div key={i} className="mb-0.5 break-words">
+                       <span className="text-gray-600">[{log.time}]</span>{' '}
+                       <span className={`${log.type === 'trade' ? 'text-blue-400' : log.type === 'dna' ? 'text-purple-400' : log.type === 'success' ? 'text-green-400' : log.type === 'error' ? 'text-red-500' : 'text-gray-400'}`}>
+                          {log.source}: {log.msg}
+                       </span>
+                    </div>
+                 ))}
+              </div>
            </div>
         </div>
+
       </div>
-      <style>{`.custom-scrollbar::-webkit-scrollbar { width: 3px; } .custom-scrollbar::-webkit-scrollbar-thumb { background: #333; }`}</style>
+      
+      <style>{`
+        .custom-scrollbar::-webkit-scrollbar { width: 3px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: #000; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #555; }
+      `}</style>
     </div>
   );
 }
